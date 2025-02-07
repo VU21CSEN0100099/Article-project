@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  article:
+    build: .
+    container_name: article_container
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    networks:
+      - blog_network
+
+  redis:
+    image: redis:latest
+    container_name: redis_container
+    ports:
+      - "6379:6379"
+    networks:
+      - blog_network
+
+networks:
+  blog_network:
+    driver: bridge

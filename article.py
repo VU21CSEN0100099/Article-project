@@ -9,11 +9,22 @@ from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from fastapi.security import OAuth2PasswordBearer
+import redis
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+#create a redis client
 
+# Connect to Redis running on localhost:6379 (Docker mapped port)
+redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
 
+# Test Redis connection
+try:
+    redis_client.set("test_key", "Hello Redis!")
+    value = redis_client.get("test_key")
+    print(f"Connected to Redis! Retrieved value: {value}")
+except redis.ConnectionError:
+    print("Failed to connect to Redis.")
 
 
 
@@ -61,7 +72,7 @@ class BlogModel(Base):
     id = Column(Integer, primary_key=True, index=True)  # Blog ID
     title = Column(String, index=True)  # Blog title
     username= Column(String, unique=True, index=True)
-    paaword= Column(String)
+    password= Column(String)
     content = Column(Text)  # Blog content
     date = Column(DateTime)  # Blog date
     author = Column(String)  # Blog author
@@ -148,9 +159,19 @@ def create_blog(blog_id: int, blog: Blog, db: Session = Depends(get_db)):
 
 @app.get("/get-blog/")
 def get_blog(blog_id: int, db: Session = Depends(get_db)):
+
+        # Check if blog is in Redis cache
+    cached_blog = redis_client.get(f"blog:{blog_id}")
+    if cached_blog:
+        return {"blog": eval(cached_blog)}  
+        #if not in the cache, get from the database
     db_blog = db.query(BlogModel).filter(BlogModel.id == blog_id).first()
     if db_blog is None:
         raise HTTPException(status_code=404, detail="blog not found")
+
+    #expire the cache in 5 mins
+    redis_client.setex(f"blog:{blog_id}", 300, str(db_blog.__dict__))
+
     return db_blog
 
 
@@ -171,6 +192,12 @@ def put_blog(blog_id: int, blog: optionalBlog, db: Session = Depends(get_db)):
         db_blog.author = blog.author
     db.commit()
     db.refresh(db_blog)
+
+
+    # Update the Redis cache with the latest blog data
+    redis_client.setex(f"blog:{blog_id}", 300, str(db_blog.__dict__))  
+
+
     return db_blog
 
 
@@ -182,4 +209,9 @@ def delete_blog(blog_id: int, db: Session = Depends(get_db)):
     db.delete(db_blog)
     db.flush()
     db.commit()
+
+    # Remove from cache
+    redis_client.delete(f"blog:{blog_id}")
+
+
     return {"message": "blog is deleted"}
